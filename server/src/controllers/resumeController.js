@@ -21,11 +21,11 @@ if (USE_REAL_AI) {
 
 function generateMockAnalysis(resumeText, targetRole, jobDescription) {
   const textLower = resumeText.toLowerCase();
-  
+
   const hasExperience = textLower.includes("experience") || textLower.includes("work");
   const hasProjects = textLower.includes("project");
   const hasInternship = textLower.includes("intern") || textLower.includes("internship");
-  
+
   // Determine base score based on user instructions
   let baseScore = 40;
   if (hasExperience && (hasProjects || hasInternship)) {
@@ -54,7 +54,7 @@ function generateMockAnalysis(resumeText, targetRole, jobDescription) {
   } else {
     strengths.push("Includes quantified achievements");
   }
-  
+
   if (!textLower.includes("certification") && !textLower.includes("certificate")) {
     weaknesses.push("No certifications");
     suggestions.push({ category: "Content", text: "Include relevant industry certifications." });
@@ -73,10 +73,10 @@ function generateMockAnalysis(resumeText, targetRole, jobDescription) {
   const jdMissingKeywords = jobDescription ? ["Docker", "AWS", "CI/CD"] : [];
 
   return {
-    scoreBreakdown: { 
-      impact: Math.min(baseScore + Math.floor(Math.random() * 10), 100), 
-      formatting: Math.min(baseScore + Math.floor(Math.random() * 10), 100), 
-      keywords: Math.min(baseScore - Math.floor(Math.random() * 5), 100), 
+    scoreBreakdown: {
+      impact: Math.min(baseScore + Math.floor(Math.random() * 10), 100),
+      formatting: Math.min(baseScore + Math.floor(Math.random() * 10), 100),
+      keywords: Math.min(baseScore - Math.floor(Math.random() * 5), 100),
       relevance: Math.min(baseScore + Math.floor(Math.random() * 5), 100)
     },
     matchPercentage: jobDescription ? Math.min(baseScore + 5, 100) : baseScore,
@@ -84,10 +84,10 @@ function generateMockAnalysis(resumeText, targetRole, jobDescription) {
     missingSkills: weaknesses.length ? weaknesses : ["Docker", "AWS", "CI/CD"],
     suggestions: suggestions,
     improvedBullets: [
-      { 
-        original: "Worked on a web project", 
-        improved: "Developed a full-stack web application, increasing user engagement by 20%", 
-        reason: "Added quantified metrics" 
+      {
+        original: "Worked on a web project",
+        improved: "Developed a full-stack web application, increasing user engagement by 20%",
+        reason: "Added quantified metrics"
       }
     ],
     learningRoadmap: [
@@ -119,7 +119,7 @@ export const uploadAndAnalyze = async (req, res) => {
     const { targetRole, jobDescription } = req.body;
 
     const dataBuffer = fs.readFileSync(req.file.path);
-    
+
     // Create Hash
     const fileHash = crypto.createHash('md5').update(dataBuffer).digest('hex');
 
@@ -144,56 +144,35 @@ export const uploadAndAnalyze = async (req, res) => {
     let aiAnalysis;
 
     if (USE_REAL_AI) {
-      const prompt = `You are a STRICT ATS scoring system. 
-You must be harsh and realistic.
+      const fullPrompt = `
+You are a strict ATS JSON generator.
 
-RESUME CONTENT TO ANALYZE:
-${resumeText.substring(0, 4000)}
+Return ONLY valid JSON. No explanation. No text.
 
-TARGET ROLE: ${targetRole || 'General'}
+Format:
+{
+  "score": number,
+  "skills": [],
+  "suggestions": []
+}
 
-For missingKeywords:
-- Read the resume carefully
-- Only list technologies NOT found in resume
-- Must be relevant to target role
-- Maximum 5 keywords
-- Never repeat keywords found in resume
-
-Return ONLY a valid JSON object with no extra text.
-Ensure the JSON matches this structure exactly:
-      {
-        "extractedSkills": [string],
-        "missingSkills": [string],
-        "jdMatchedKeywords": [string],
-        "jdMissingKeywords": [string],
-        "suggestions": [
-          { "category": string, "text": string } 
-        ],
-        "improvedBullets": [ { "original": string, "improved": string, "reason": string } ],
-        "learningRoadmap": [
-          { "skill": string, "steps": [string, string, string] }
-        ],
-        "sectionCompleteness": {
-          "Summary": boolean,
-          "Experience": boolean,
-          "Education": boolean,
-          "Skills": boolean,
-          "Projects": boolean,
-          "Certifications": boolean
-        }
-      }`;
-
-      const fullPrompt = "You are a specialized ATS JSON generator.\\n" + prompt;
+Resume:
+${resumeText}
+`;
       const completion = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-        generationConfig: { responseMimeType: "application/json" }
+        contents: [{ role: "user", parts: [{ text: fullPrompt }] }]
       });
 
-      aiAnalysis = JSON.parse(completion.response.text());
+      const rawText = completion.response.text();
+
+      // optional cleanup (safe)
+      const cleanText = rawText.replace(/```json|```/g, '').trim();
+
+      aiAnalysis = JSON.parse(cleanText);
     } else {
       aiAnalysis = generateMockAnalysis(resumeText, targetRole, jobDescription);
     }
-    
+
     // Calculate scoreBreakdown in JavaScript
     const resumeTextLower = resumeText.toLowerCase();
 
@@ -288,7 +267,7 @@ export const getAnalysis = async (req, res) => {
   try {
     const resume = await Resume.findById(req.params.id);
     if (!resume) return res.status(404).json({ message: 'Resume not found' });
-    
+
     // Ensure the resume belongs to the logged-in user
     if (resume.user.toString() !== req.user.id) {
       return res.status(401).json({ message: 'Not authorized' });
@@ -308,7 +287,7 @@ export const generateCoverLetter = async (req, res) => {
   try {
     const resume = await Resume.findById(req.params.id);
     if (!resume) return res.status(404).json({ message: 'Resume not found' });
-    
+
     if (resume.user.toString() !== req.user.id) {
       return res.status(401).json({ message: 'Not authorized' });
     }
@@ -342,7 +321,7 @@ export const generateCoverLetter = async (req, res) => {
       res.json({ coverLetter: result.response.text() });
     } else {
       // Mock response
-      const mockLetter = `Dear Hiring Manager at ${companyName},\n\nI am writing to express my strong interest in the ${jobTitle} position. With my background in ${resume.extractedSkills.slice(0,3).join(", ")}, I am confident I can bring immediate value to your team.\n\nWhile I am currently expanding my knowledge in areas like ${resume.missingSkills[0] || 'advanced tools'}, my proven ability to deliver results quickly demonstrates my adaptability.\n\nThank you for considering my application. I look forward to the possibility of discussing this exciting opportunity with you.\n\nSincerely,\n[Your Name]`;
+      const mockLetter = `Dear Hiring Manager at ${companyName},\n\nI am writing to express my strong interest in the ${jobTitle} position. With my background in ${resume.extractedSkills.slice(0, 3).join(", ")}, I am confident I can bring immediate value to your team.\n\nWhile I am currently expanding my knowledge in areas like ${resume.missingSkills[0] || 'advanced tools'}, my proven ability to deliver results quickly demonstrates my adaptability.\n\nThank you for considering my application. I look forward to the possibility of discussing this exciting opportunity with you.\n\nSincerely,\n[Your Name]`;
       res.json({ coverLetter: mockLetter });
     }
   } catch (error) {
