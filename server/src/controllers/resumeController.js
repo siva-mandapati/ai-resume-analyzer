@@ -13,7 +13,10 @@ let genAI;
 let model;
 if (USE_REAL_AI) {
   genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+  model = genAI.getGenerativeModel(
+    { model: "gemini-2.0-flash" },
+    { apiVersion: "v1" }
+  );
 }
 
 function generateMockAnalysis(resumeText, targetRole, jobDescription) {
