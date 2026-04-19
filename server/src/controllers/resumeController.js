@@ -141,46 +141,34 @@ export const uploadAndAnalyze = async (req, res) => {
     let aiAnalysis;
 
     if (USE_REAL_AI) {
-      const prompt = `
-      You are an expert ATS (Applicant Tracking System) and Senior Technical Recruiter.
-      Analyze the following resume text meticulously. Ensure that your scoring and feedback are uniquely tailored to this specific resume content. DO NOT output generic scores.
-      
-      CRITICAL SCORING GUIDELINES:
-      Make the scoring harsh and realistic like a real ATS system:
-      - Fresher with no experience: 40-55
-      - Some projects but no internship: 55-70
-      - Good resume with internship and projects: 70-85
-      - Excellent resume with experience: 85-95
-      
-      Penalize heavily for:
-      - Missing summary section
-      - No quantified metrics in bullets
-      - Missing keywords for the target role
-      - Weak action verbs
-      - No certifications
-      
-      Target Role: ${targetRole || 'General'}
-      ${jobDescription ? `Job Description to match against: ${jobDescription}` : ''}
+      const prompt = `You are a STRICT ATS scoring system. 
+You must be harsh and realistic.
 
-      Output a STRICT JSON object with the following structure exactly:
+RESUME CONTENT TO ANALYZE:
+${resumeText.substring(0, 4000)}
+
+TARGET ROLE: ${targetRole || 'General'}
+
+For missingKeywords:
+- Read the resume carefully
+- Only list technologies NOT found in resume
+- Must be relevant to target role
+- Maximum 5 keywords
+- Never repeat keywords found in resume
+
+Return ONLY a valid JSON object with no extra text.
+Ensure the JSON matches this structure exactly:
       {
-        "scoreBreakdown": { 
-          "impact": number (0-100, calculate dynamically based on presence of quantified metrics and results), 
-          "formatting": number (0-100, calculate dynamically based on clear structure), 
-          "keywords": number (0-100, calculate dynamically based on relevant skills), 
-          "relevance": number (0-100, calculate dynamically based on target role fit) 
-        },
-        "matchPercentage": number (0-100), // Match against Job Description if provided, otherwise relevance to Target Role
-        "extractedSkills": [string], // All skills found in the resume
-        "missingSkills": [string], // Crucial skills missing for the target role/JD
-        "jdMatchedKeywords": [string], // Specific keywords from the Job Description that ARE in the resume (if JD provided)
-        "jdMissingKeywords": [string], // Specific keywords from the Job Description that are MISSING (if JD provided)
-        "suggestions": [ // EXACTLY 4 to 5 highly specific suggestions based on actual text
+        "extractedSkills": [string],
+        "missingSkills": [string],
+        "jdMatchedKeywords": [string],
+        "jdMissingKeywords": [string],
+        "suggestions": [
           { "category": string, "text": string } 
         ],
         "improvedBullets": [ { "original": string, "improved": string, "reason": string } ],
-        "learningRoadmap": [ // Include an entry for ALL missing skills identified
-          { "skill": string, "steps": [string, string, string] } // EXACTLY 3 actionable learning steps per skill
+        "learningRoadmap": [
+          { "skill": string, "steps": [string, string, string] }
         ],
         "sectionCompleteness": {
           "Summary": boolean,
@@ -190,11 +178,7 @@ export const uploadAndAnalyze = async (req, res) => {
           "Projects": boolean,
           "Certifications": boolean
         }
-      }
-
-      RESUME TEXT:
-      ${resumeText.substring(0, 4000)} // Ensure we don't exceed token limits
-      `;
+      }`;
 
       const fullPrompt = "You are a specialized ATS JSON generator.\\n" + prompt;
       const completion = await model.generateContent({
@@ -207,13 +191,49 @@ export const uploadAndAnalyze = async (req, res) => {
       aiAnalysis = generateMockAnalysis(resumeText, targetRole, jobDescription);
     }
     
-    // Calculate overall score from breakdown
-    const overallScore = Math.floor(
-      (aiAnalysis.scoreBreakdown.impact + 
-       aiAnalysis.scoreBreakdown.formatting + 
-       aiAnalysis.scoreBreakdown.keywords + 
-       aiAnalysis.scoreBreakdown.relevance) / 4
-    );
+    // Calculate scoreBreakdown in JavaScript
+    const resumeTextLower = resumeText.toLowerCase();
+
+    const hasMetrics = /\d+%|\d+ users|\d+ projects|increased|reduced|improved/.test(resumeText);
+    const hasInternship = /internship|intern|experience|worked at|employed/.test(resumeTextLower);
+    const hasSummary = /summary|objective|profile|about/.test(resumeTextLower);
+    const hasCertification = /certification|certified|certificate|course/.test(resumeTextLower);
+    const skillCount = aiAnalysis.extractedSkills ? aiAnalysis.extractedSkills.length : 0;
+    const hasQuantifiedMetrics = hasMetrics;
+    const weakVerbs = /worked on|helped|assisted|participated|was responsible/.test(resumeTextLower);
+
+    let impact = 10;
+    if (hasMetrics) impact += 10;
+    if (!weakVerbs) impact += 5;
+
+    let formatting = 10;
+    if (hasSummary) formatting += 8;
+    if (skillCount > 5) formatting += 7;
+
+    let keywords = 5;
+    if (skillCount >= 8) keywords = 22;
+    else if (skillCount >= 5) keywords = 15;
+    else if (skillCount >= 3) keywords = 10;
+
+    let relevance = 10;
+    if (hasInternship) relevance += 10;
+    if (hasCertification) relevance += 5;
+
+    // Apply deductions
+    if (!hasSummary) { impact -= 5; formatting -= 5; }
+    if (!hasInternship) relevance -= 8;
+    if (!hasCertification) keywords -= 3;
+    if (weakVerbs) impact -= 5;
+    if (!hasMetrics) impact -= 5;
+
+    // Clamp values
+    impact = Math.max(5, Math.min(25, impact));
+    formatting = Math.max(5, Math.min(25, formatting));
+    keywords = Math.max(5, Math.min(25, keywords));
+    relevance = Math.max(5, Math.min(25, relevance));
+
+    const scoreBreakdown = { impact, formatting, keywords, relevance };
+    const overallScore = impact + formatting + keywords + relevance;
 
     // 4. Save to database
     const resume = await Resume.create({
@@ -223,9 +243,9 @@ export const uploadAndAnalyze = async (req, res) => {
       originalText: resumeText,
       targetRole: targetRole || "General",
       jobDescription: jobDescription || "",
-      matchPercentage: aiAnalysis.matchPercentage || overallScore,
+      matchPercentage: overallScore,
       score: overallScore,
-      scoreBreakdown: aiAnalysis.scoreBreakdown,
+      scoreBreakdown: scoreBreakdown,
       extractedSkills: aiAnalysis.extractedSkills,
       missingSkills: aiAnalysis.missingSkills,
       suggestions: aiAnalysis.suggestions,
